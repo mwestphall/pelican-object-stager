@@ -4,19 +4,18 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sync"
 	"time"
-
-	"go.uber.org/zap"
 
 	"github.com/pelicanplatform/pelicanobjectstager/config"
 	"github.com/pelicanplatform/pelicanobjectstager/db"
 	"github.com/pelicanplatform/pelicanobjectstager/logger"
 )
 
-var log = logger.With(zap.String("component", "db-refresh"))
+var log = logger.SlogWith(slog.String("component", "db-refresh"))
 
 var insecureHTTPClient = &http.Client{
 	Transport: &http.Transport{
@@ -30,22 +29,22 @@ var insecureHTTPClient = &http.Client{
 // refreshStaleRecords identifies stale records and processes them concurrently
 func refreshRecords() error {
 	jobID := fmt.Sprintf("refresh-records-id-%s", time.Now().Format("20060102-150405"))
-	log.Info("Starting refresh stale records job", zap.String("job_id", jobID))
+	log.Info("Starting refresh stale records job", slog.String("job_id", jobID))
 
 	// Step 1: Fetch stale records
 	cutoffTime := time.Now().Add(-config.AppConfig.Database.MaxRecordStaleDuration)
 	var staleRecords []db.StagingRecord
 	if err := db.DB.Where("updated_at < ?", cutoffTime).Find(&staleRecords).Error; err != nil {
-		log.Error("Failed to fetch stale records", zap.String("job_id", jobID), zap.Error(err))
+		log.Error("Failed to fetch stale records", slog.String("job_id", jobID), logger.Error(err))
 		return err
 	}
 
 	if len(staleRecords) == 0 {
-		log.Info("No stale records found", zap.String("job_id", jobID))
+		log.Info("No stale records found", slog.String("job_id", jobID))
 		return nil
 	}
 
-	log.Info("Stale records fetched", zap.Int("count", len(staleRecords)), zap.String("job_id", jobID))
+	log.Info("Stale records fetched", slog.Int("count", len(staleRecords)), slog.String("job_id", jobID))
 
 	// Step 2: Set up worker pool
 	numWorkers := config.AppConfig.Staging.Workers
@@ -78,11 +77,11 @@ func refreshRecords() error {
 	}
 
 	if hasErrors {
-		log.Warn("Refresh completed with errors", zap.String("job_id", jobID))
+		log.Warn("Refresh completed with errors", slog.String("job_id", jobID))
 		return nil // Or return a custom error summarizing failures if needed
 	}
 
-	log.Info("Refresh completed successfully", zap.String("job_id", jobID))
+	log.Info("Refresh completed successfully", slog.String("job_id", jobID))
 	return nil
 }
 
@@ -93,7 +92,7 @@ func refreshRecordWorker(recordChan <-chan db.StagingRecord, resultsChan chan<- 
 		// Extract URL path from PelicanURL and append it to StagingStorage
 		parsedURL, err := url.Parse(record.PelicanURL)
 		if err != nil {
-			log.Error("Failed to parse URL", zap.String("job_id", jobID), zap.Uint("recordID", record.ID), zap.Error(err))
+			log.Error("Failed to parse URL", slog.String("job_id", jobID), slog.Any("recordID", record.ID), logger.Error(err))
 			resultsChan <- err
 			continue
 		}
@@ -101,7 +100,7 @@ func refreshRecordWorker(recordChan <-chan db.StagingRecord, resultsChan chan<- 
 
 		stagingURL, err := url.Parse(record.StagingStorage)
 		if err != nil {
-			log.Error("Failed to parse StagingStorage", zap.String("job_id", jobID), zap.Uint("recordID", record.ID), zap.Error(err))
+			log.Error("Failed to parse StagingStorage", slog.String("job_id", jobID), slog.Any("recordID", record.ID), logger.Error(err))
 			resultsChan <- err
 			continue
 		}
@@ -110,15 +109,15 @@ func refreshRecordWorker(recordChan <-chan db.StagingRecord, resultsChan chan<- 
 		objectURL := stagingURL.String()
 
 		log.Info("Worker processing record",
-			zap.String("job_id", jobID),
-			zap.Uint("recordID", record.ID),
-			zap.String("url", objectURL),
+			slog.String("job_id", jobID),
+			slog.Any("recordID", record.ID),
+			slog.String("url", objectURL),
 		)
 
 		// Make a HEAD request to the URL using the custom insecure HTTP client
 		resp, err := insecureHTTPClient.Head(objectURL)
 		if err != nil {
-			log.Error("Failed to make HEAD request", zap.String("job_id", jobID), zap.Uint("recordID", record.ID), zap.Error(err))
+			log.Error("Failed to make HEAD request", slog.String("job_id", jobID), slog.Any("recordID", record.ID), logger.Error(err))
 			resultsChan <- err
 			continue
 		}
@@ -132,23 +131,23 @@ func refreshRecordWorker(recordChan <-chan db.StagingRecord, resultsChan chan<- 
 			case http.StatusOK: // 200 OK
 				// Update the `UpdatedAt` timestamp in the database
 				if updateErr := db.DB.Model(&record).Update("updated_at", time.Now()).Error; updateErr != nil {
-					log.Error("Failed to update record timestamp", zap.String("job_id", jobID), zap.Uint("recordID", record.ID), zap.Error(updateErr))
+					log.Error("Failed to update record timestamp", slog.String("job_id", jobID), slog.Any("recordID", record.ID), logger.Error(updateErr))
 					resultsChan <- updateErr
 				} else {
-					log.Info("Record timestamp updated", zap.String("job_id", jobID), zap.Uint("recordID", record.ID))
+					log.Info("Record timestamp updated", slog.String("job_id", jobID), slog.Any("recordID", record.ID))
 					resultsChan <- nil
 				}
 			case http.StatusNotFound: // 404 Not Found
 				// Delete the record from the database
 				if deleteErr := db.DB.Delete(&record).Error; deleteErr != nil {
-					log.Error("Failed to delete record", zap.String("job_id", jobID), zap.Uint("recordID", record.ID), zap.Error(deleteErr))
+					log.Error("Failed to delete record", slog.String("job_id", jobID), slog.Any("recordID", record.ID), logger.Error(deleteErr))
 					resultsChan <- deleteErr
 				} else {
-					log.Info("Record deleted", zap.String("job_id", jobID), zap.Uint("recordID", record.ID))
+					log.Info("Record deleted", slog.String("job_id", jobID), slog.Any("recordID", record.ID))
 					resultsChan <- nil
 				}
 			default:
-				log.Warn("Unexpected response status", zap.String("job_id", jobID), zap.Uint("recordID", record.ID), zap.Int("status_code", resp.StatusCode))
+				log.Warn("Unexpected response status", slog.String("job_id", jobID), slog.Any("recordID", record.ID), slog.Int("status_code", resp.StatusCode))
 				resultsChan <- fmt.Errorf("unexpected response status: %d", resp.StatusCode)
 			}
 		}()
@@ -160,7 +159,7 @@ func refreshRecordWorker(recordChan <-chan db.StagingRecord, resultsChan chan<- 
 func LaunchPeriodicRefreshRecords(ctx context.Context) {
 	refreshInterval := config.AppConfig.Database.RefreshInterval
 
-	log.Info("Launching periodic refresh records", zap.Duration("interval", refreshInterval))
+	log.Info("Launching periodic refresh records", slog.Duration("interval", refreshInterval))
 
 	// Start the periodic refresh loop
 	go func() {
@@ -172,7 +171,7 @@ func LaunchPeriodicRefreshRecords(ctx context.Context) {
 			case <-ticker.C:
 				log.Info("Periodic refresh triggered")
 				if err := refreshRecords(); err != nil {
-					log.Error("Error occurred during refresh", zap.Error(err))
+					log.Error("Error occurred during refresh", logger.Error(err))
 				}
 			case <-ctx.Done():
 				// Stop the loop when the Gin context is canceled

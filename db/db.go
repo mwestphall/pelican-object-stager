@@ -3,9 +3,9 @@ package db
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
-	"go.uber.org/zap"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
@@ -36,7 +36,7 @@ type StagingRecordLite struct {
 
 var (
 	DB  *gorm.DB
-	log = logger.With(zap.String("component", "database"))
+	log = logger.SlogWith(slog.String("component", "database"))
 )
 
 // Initialize sets up the database connection and runs migrations.
@@ -46,15 +46,15 @@ func InitializeDB() {
 	databaseLocation := config.AppConfig.Database.Location
 	DB, err = gorm.Open(sqlite.Open(databaseLocation), &gorm.Config{})
 	if err != nil {
-		log.Fatal("Failed to connect to the database", zap.Error(err))
+		logger.LogFatal(log, "Failed to connect to the database", err)
 		return
 	}
-	log.Info("Database connection established", zap.String("location", databaseLocation))
+	log.Info("Database connection established", slog.String("location", databaseLocation))
 
 	// Run migrations
 	err = DB.AutoMigrate(&StagingRecord{})
 	if err != nil {
-		log.Fatal("Failed to migrate database", zap.Error(err))
+		logger.LogFatal(log, "Failed to migrate database", err)
 		return
 	}
 	log.Info("Database migration completed")

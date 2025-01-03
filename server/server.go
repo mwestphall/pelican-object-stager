@@ -2,10 +2,10 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
 
 	"github.com/pelicanplatform/pelicanobjectstager/config"
 	"github.com/pelicanplatform/pelicanobjectstager/dbrefresh"
@@ -13,7 +13,7 @@ import (
 	"github.com/pelicanplatform/pelicanobjectstager/server/object"
 )
 
-var log = logger.With(zap.String("component", "server"))
+var log = logger.SlogWith(slog.String("component", "server"))
 
 func StartServer() {
 
@@ -39,13 +39,11 @@ func StartServer() {
 	go dbrefresh.LaunchPeriodicRefreshRecords(ctx)
 
 	log.Info("Starting server",
-		zap.Int("port", address),
+		slog.Int("port", address),
 	)
 
 	port := strconv.Itoa(address)
 	if err := r.Run(":" + port); err != nil {
-		log.Fatal("Failed to start server",
-			zap.Error(err),
-		)
+		logger.LogFatal(log, "Failed to start server", err)
 	}
 }

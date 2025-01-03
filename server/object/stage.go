@@ -1,6 +1,7 @@
 package object
 
 import (
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -9,7 +10,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"go.uber.org/zap"
 
 	"github.com/pelicanplatform/pelicanobjectstager/config"
 	"github.com/pelicanplatform/pelicanobjectstager/db"
@@ -17,7 +17,7 @@ import (
 	"github.com/pelicanplatform/pelicanobjectstager/pelican"
 )
 
-var log = logger.With(zap.String("component", "object"))
+var log = logger.SlogWith(slog.String("component", "object"))
 
 // StageRequest represents the input structure for the /object/stage endpoint
 type StageRequest struct {
@@ -43,7 +43,7 @@ func HandleStage(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
-		log.Error("Failed to bind JSON input", zap.String("job_id", jobID), zap.Error(err))
+		log.Error("Failed to bind JSON input", slog.String("job_id", jobID), logger.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -84,14 +84,14 @@ func HandleStage(c *gin.Context) {
 
 	// Determine response status
 	if hasErrors {
-		log.Warn("Staging completed with errors", zap.String("job_id", jobID))
+		log.Warn("Staging completed with errors", slog.String("job_id", jobID))
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"job_id":  jobID,
 			"message": "Staging completed with errors",
 			"results": results,
 		})
 	} else {
-		log.Info("Staging completed successfully", zap.String("job_id", jobID))
+		log.Info("Staging completed successfully", slog.String("job_id", jobID))
 		c.JSON(http.StatusOK, gin.H{
 			"job_id":  jobID,
 			"message": "Staging completed successfully",
@@ -119,12 +119,12 @@ func stagingWorker(entries <-chan RequestEntry, targetCache string, results chan
 		args = append(args, "--cache", targetCache)
 
 		log.Debug("Processing entry",
-			zap.String("job_id", jobID),
-			zap.String("request_url", entry.RequestURL),
-			zap.String("parameters", entry.Parameters),
-			zap.Strings("parsed_args", args),
-			zap.String("temp_destination", tempDestination),
-			zap.String("local_object_destination", objectDestination),
+			slog.String("job_id", jobID),
+			slog.String("request_url", entry.RequestURL),
+			slog.String("parameters", entry.Parameters),
+			slog.String("parsed_args", strings.Join(args, ", ")),
+			slog.String("temp_destination", tempDestination),
+			slog.String("local_object_destination", objectDestination),
 		)
 
 		stdout, stderr, exitCode, err := pelican.InvokePelicanBinary(args)
@@ -137,13 +137,13 @@ func stagingWorker(entries <-chan RequestEntry, targetCache string, results chan
 			}
 
 			log.Error("Failed to process entry",
-				zap.String("job_id", jobID),
-				zap.String("request_url", entry.RequestURL),
-				zap.String("stdout", stdout),
-				zap.String("stderr", stderr),
-				zap.String("local_object_destination", objectDestination),
-				zap.String("error", errorMessage),
-				zap.Int("pelican_client_exit_code", exitCode),
+				slog.String("job_id", jobID),
+				slog.String("request_url", entry.RequestURL),
+				slog.String("stdout", stdout),
+				slog.String("stderr", stderr),
+				slog.String("local_object_destination", objectDestination),
+				slog.String("error", errorMessage),
+				slog.Int("pelican_client_exit_code", exitCode),
 			)
 			results <- map[string]interface{}{
 				"request_url": entry.RequestURL,
@@ -153,13 +153,13 @@ func stagingWorker(entries <-chan RequestEntry, targetCache string, results chan
 			objectInfo, err := os.Stat(objectDestination)
 			if err != nil {
 				log.Error("Failed to process entry",
-					zap.String("job_id", jobID),
-					zap.String("request_url", entry.RequestURL),
-					zap.String("stdout", stdout),
-					zap.String("stderr", stderr),
-					zap.String("local_object_destination", objectDestination),
-					zap.String("error", err.Error()),
-					zap.Int("pelican_client_exit_code", exitCode),
+					slog.String("job_id", jobID),
+					slog.String("request_url", entry.RequestURL),
+					slog.String("stdout", stdout),
+					slog.String("stderr", stderr),
+					slog.String("local_object_destination", objectDestination),
+					slog.String("error", err.Error()),
+					slog.Int("pelican_client_exit_code", exitCode),
 				)
 				results <- map[string]interface{}{
 					"request_url": entry.RequestURL,
@@ -171,12 +171,12 @@ func stagingWorker(entries <-chan RequestEntry, targetCache string, results chan
 			err = db.InsertOrUpdateStagingRecord(entry.RequestURL, targetCache, jobID, objectSize, exitCode, stdout, stderr)
 			if err == nil {
 				log.Info("Entry processed successfully",
-					zap.String("job_id", jobID),
-					zap.String("request_url", entry.RequestURL),
-					zap.Int64("object_size_in_bytes", objectSize),
-					zap.String("stdout", stdout),
-					zap.String("stderr", stderr),
-					zap.Int("pelican_client_exit_code", exitCode),
+					slog.String("job_id", jobID),
+					slog.String("request_url", entry.RequestURL),
+					slog.Int64("object_size_in_bytes", objectSize),
+					slog.String("stdout", stdout),
+					slog.String("stderr", stderr),
+					slog.Int("pelican_client_exit_code", exitCode),
 				)
 				results <- map[string]interface{}{
 					"request_url": entry.RequestURL,
@@ -184,13 +184,13 @@ func stagingWorker(entries <-chan RequestEntry, targetCache string, results chan
 				}
 			} else {
 				log.Error("Failed to insert staging record",
-					zap.String("job_id", jobID),
-					zap.String("request_url", entry.RequestURL),
-					zap.Int64("object_size_in_bytes", objectSize),
-					zap.String("stdout", stdout),
-					zap.String("stderr", stderr),
-					zap.Int("pelican_client_exit_code", exitCode),
-					zap.Error(err),
+					slog.String("job_id", jobID),
+					slog.String("request_url", entry.RequestURL),
+					slog.Int64("object_size_in_bytes", objectSize),
+					slog.String("stdout", stdout),
+					slog.String("stderr", stderr),
+					slog.Int("pelican_client_exit_code", exitCode),
+					logger.Error(err),
 				)
 				results <- map[string]interface{}{
 					"request_url": entry.RequestURL,
